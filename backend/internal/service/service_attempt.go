@@ -20,11 +20,11 @@ import (
 // AttemptService handles taking, submitting and grading exams.
 type AttemptService struct {
 	baseService
-	examRepo    ExamRepo
+	examRepo     ExamRepo
 	questionRepo QuestionRepo
-	attemptRepo AttemptRepo
-	answerRepo  AnswerRepo
-	wrongRepo   WrongRepo
+	attemptRepo  AttemptRepo
+	answerRepo   AnswerRepo
+	wrongRepo    WrongRepo
 }
 
 // NewAttemptService constructs AttemptService.
@@ -222,6 +222,7 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 					QuestionID:     q.ID,
 					KnowledgePoint: q.KnowledgePoint,
 					WrongCount:     1,
+					LostScore:      it.Score,
 					LastWrongAt:    now,
 					Status:         constants.WrongUnresolved,
 				})
@@ -309,6 +310,12 @@ func (s *AttemptService) Grade(ctx context.Context, teacherID uint, role string,
 		}
 		if item.Score > eq.Score {
 			return fmt.Errorf("%w: 得分不能超过题目分值 %.2f", ErrValidation, eq.Score)
+		}
+		if item.Score < 0 {
+			return fmt.Errorf("%w: 得分不能为负", ErrValidation)
+		}
+		if err := s.syncSubjectiveWrongBook(ctx, attempt.StudentID, &q, eq.Score, item.Score, &answer); err != nil {
+			return err
 		}
 		answer.Score = item.Score
 		answer.GradedBy = teacherID
@@ -792,4 +799,42 @@ func questionTypeName(qtype string) string {
 
 func round2(v float64) float64 {
 	return float64(int(v*100+0.5)) / 100
+}
+
+// scoresEqual compares two scores with a small tolerance for float drift.
+func scoresEqual(a, b float64) bool {
+	diff := a - b
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= 1e-9
+}
+
+// syncSubjectiveWrongBook keeps the wrong-question book in sync with a teacher
+// grade: a below-full-score answer joins the unresolved list (recording the
+// points lost in this exam), a full-score grade turns it mastered, and saving
+// the same score again does not touch the record.
+func (s *AttemptService) syncSubjectiveWrongBook(ctx context.Context, studentID uint, q *model.Question, maxScore, newScore float64, answer *model.Answer) error {
+	if answer.GradedBy != 0 && scoresEqual(answer.Score, newScore) {
+		return nil
+	}
+	if scoresEqual(newScore, maxScore) {
+		if err := s.wrongRepo.ResolveWrongQuestionByQuestion(ctx, studentID, q.ID); err != nil {
+			return fmt.Errorf("resolve wrong question: %w", err)
+		}
+		return nil
+	}
+	w := &model.WrongQuestion{
+		StudentID:      studentID,
+		QuestionID:     q.ID,
+		KnowledgePoint: q.KnowledgePoint,
+		WrongCount:     1,
+		LostScore:      round2(maxScore - newScore),
+		LastWrongAt:    time.Now(),
+		Status:         constants.WrongUnresolved,
+	}
+	if err := s.wrongRepo.RecordSubjectiveWrong(ctx, w); err != nil {
+		return fmt.Errorf("record subjective wrong question: %w", err)
+	}
+	return nil
 }

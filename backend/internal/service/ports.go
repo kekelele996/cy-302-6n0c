@@ -59,6 +59,8 @@ type AnswerRepo interface {
 // WrongRepo is the wrong-question persistence contract.
 type WrongRepo interface {
 	UpsertWrongQuestion(ctx context.Context, w *model.WrongQuestion) error
+	RecordSubjectiveWrong(ctx context.Context, w *model.WrongQuestion) error
+	ResolveWrongQuestionByQuestion(ctx context.Context, studentID, questionID uint) error
 	ListWrongQuestions(ctx context.Context, studentID uint, knowledgePoint string, page, pageSize int) ([]model.WrongQuestion, int64, error)
 	DeleteWrongQuestion(ctx context.Context, id, studentID uint) error
 	MarkWrongQuestionResolved(ctx context.Context, id, studentID uint) error

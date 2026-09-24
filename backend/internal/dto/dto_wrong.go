@@ -14,6 +14,7 @@ type WrongQuestionItem struct {
 	QuestionID     uint             `json:"question_id"`
 	KnowledgePoint string           `json:"knowledge_point"`
 	WrongCount     int              `json:"wrong_count"`
+	LostScore      float64          `json:"lost_score"`
 	Status         string           `json:"status"`
 	LastWrongAt    time.Time        `json:"last_wrong_at"`
 	Question       QuestionResponse `json:"question"`
@@ -27,6 +28,9 @@ type PracticeQuestion struct {
 	Options        []Option `json:"options"`
 	Score          float64  `json:"score"`
 	KnowledgePoint string   `json:"knowledge_point"`
+	// ReferenceAnswer is shown for subjective questions so students can
+	// self-assess during practice.
+	ReferenceAnswer any `json:"reference_answer,omitempty"`
 }
 
 // PracticeStartResponse returns a shuffled practice set.
@@ -38,6 +42,9 @@ type PracticeStartResponse struct {
 type PracticeAnswerItem struct {
 	QuestionID uint `json:"question_id" binding:"required"`
 	Answer     any  `json:"answer"`
+	// SelfCorrect is the student's self-assessment for subjective questions
+	// (fill blank / short answer) against the reference answer.
+	SelfCorrect *bool `json:"self_correct"`
 }
 
 // PracticeAnswerRequest submits a practice set.
@@ -47,8 +54,8 @@ type PracticeAnswerRequest struct {
 
 // PracticeResultItem reports one practice answer.
 type PracticeResultItem struct {
-	QuestionID uint  `json:"question_id"`
-	Correct    bool  `json:"correct"`
+	QuestionID uint    `json:"question_id"`
+	Correct    bool    `json:"correct"`
 	Score      float64 `json:"score"`
 }
 

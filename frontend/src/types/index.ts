@@ -191,6 +191,7 @@ export interface WrongQuestionItem {
   question_id: number
   knowledge_point: string
   wrong_count: number
+  lost_score: number
   status: string
   last_wrong_at: string
   question: Question
@@ -203,6 +204,7 @@ export interface PracticeQuestion {
   options: Option[]
   score: number
   knowledge_point: string
+  reference_answer?: unknown
 }
 
 export interface PracticeResultResponse {

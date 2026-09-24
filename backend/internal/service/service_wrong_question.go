@@ -50,6 +50,7 @@ func (s *WrongQuestionService) List(ctx context.Context, studentID uint, query d
 			QuestionID:     r.QuestionID,
 			KnowledgePoint: r.KnowledgePoint,
 			WrongCount:     r.WrongCount,
+			LostScore:      r.LostScore,
 			Status:         r.Status,
 			LastWrongAt:    r.LastWrongAt,
 			Question:       *questionToResponse(&q),
@@ -99,19 +100,27 @@ func (s *WrongQuestionService) Practice(ctx context.Context, studentID uint) (*d
 		if isChoiceType(q.Type) {
 			shuffle(options, rng)
 		}
-		items = append(items, dto.PracticeQuestion{
+		item := dto.PracticeQuestion{
 			QuestionID:     q.ID,
 			Type:           q.Type,
 			Content:        q.Content,
 			Options:        options,
 			Score:          q.Score,
 			KnowledgePoint: q.KnowledgePoint,
-		})
+		}
+		// Subjective questions expose the reference answer for self-assessment.
+		if !ObjectiveQuestionTypes()[q.Type] {
+			referenceAnswer, _ := unmarshalAnswer(q.Answer)
+			item.ReferenceAnswer = referenceAnswer
+		}
+		items = append(items, item)
 	}
 	return &dto.PracticeStartResponse{Questions: items}, nil
 }
 
 // SubmitPractice grades a practice set and updates wrong-question status.
+// Objective questions are graded automatically; subjective questions rely on
+// the student's self-assessment against the reference answer.
 func (s *WrongQuestionService) SubmitPractice(ctx context.Context, studentID uint, req dto.PracticeAnswerRequest) (*dto.PracticeResultResponse, error) {
 	ids := make([]uint, 0, len(req.Answers))
 	for _, a := range req.Answers {
@@ -136,11 +145,20 @@ func (s *WrongQuestionService) SubmitPractice(ctx context.Context, studentID uin
 		if !ok {
 			continue
 		}
-		if !ObjectiveQuestionTypes()[q.Type] {
-			continue
+
+		var correct bool
+		if ObjectiveQuestionTypes()[q.Type] {
+			correctAnswer, _ := unmarshalAnswer(q.Answer)
+			correct = isCorrectObjective(q.Type, correctAnswer, a.Answer)
+		} else {
+			// Subjective practice is mastered only when the student confirms
+			// the answer against the reference answer.
+			if a.SelfCorrect == nil {
+				continue
+			}
+			correct = *a.SelfCorrect
 		}
-		correctAnswer, _ := unmarshalAnswer(q.Answer)
-		correct := isCorrectObjective(q.Type, correctAnswer, a.Answer)
+
 		item := dto.PracticeResultItem{QuestionID: q.ID, Correct: correct, Score: 0}
 		if correct {
 			item.Score = q.Score
@@ -150,11 +168,16 @@ func (s *WrongQuestionService) SubmitPractice(ctx context.Context, studentID uin
 				}
 			}
 		} else {
+			lostScore := q.Score
+			if record, exists := recordByQuestion[q.ID]; exists {
+				lostScore = record.LostScore
+			}
 			w := &model.WrongQuestion{
 				StudentID:      studentID,
 				QuestionID:     q.ID,
 				KnowledgePoint: q.KnowledgePoint,
 				WrongCount:     1,
+				LostScore:      lostScore,
 				LastWrongAt:    time.Now(),
 				Status:         constants.WrongUnresolved,
 			}

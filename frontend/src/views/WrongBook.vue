@@ -9,6 +9,11 @@
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="question.content" label="题干" min-width="240" show-overflow-tooltip />
       <el-table-column prop="knowledge_point" label="知识点" width="130" />
+      <el-table-column label="本场失分" width="100" align="center">
+        <template #default="{ row }">
+          <span :class="{ 'lost-score': row.lost_score > 0 }">{{ row.lost_score > 0 ? '-' + row.lost_score : '-' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="wrong_count" label="错误次数" width="90" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
@@ -45,6 +50,23 @@
               <el-radio value="T">正确</el-radio>
               <el-radio value="F">错误</el-radio>
             </el-radio-group>
+            <el-input
+              v-else
+              v-model="practiceTexts[q.question_id]"
+              type="textarea"
+              :rows="q.type === 'fill_blank' ? 3 : 5"
+              :placeholder="q.type === 'fill_blank' ? '每空一行填写答案' : '请输入答案'"
+            />
+          </div>
+          <div v-if="q.type === 'fill_blank' || q.type === 'short_answer'" class="self-check">
+            <div class="reference answer-text">参考答案：{{ formatAnswer(q.reference_answer) }}</div>
+            <div class="self-check-actions">
+              <span>对照参考答案，你的作答：</span>
+              <el-radio-group v-model="selfCorrect[q.question_id]">
+                <el-radio :value="true">答对了</el-radio>
+                <el-radio :value="false">仍答错</el-radio>
+              </el-radio-group>
+            </div>
           </div>
         </div>
       </template>
@@ -71,7 +93,19 @@ const practiceVisible = ref(false)
 const practice = ref<PracticeQuestion[]>([])
 const practiceAnswers = reactive<Record<number, unknown>>({})
 const practiceMultiple = reactive<Record<number, string[]>>({})
+const practiceTexts = reactive<Record<number, string>>({})
+const selfCorrect = reactive<Record<number, boolean | null>>({})
 const query = reactive({ page: 1, page_size: 10 })
+
+function isSubjective(type: string) {
+  return type === 'fill_blank' || type === 'short_answer'
+}
+
+function formatAnswer(v: unknown) {
+  if (v === null || v === undefined || v === '') return '-'
+  if (Array.isArray(v)) return v.join('；')
+  return String(v)
+}
 
 async function load() {
   loading.value = true
@@ -96,16 +130,34 @@ async function startPractice() {
   practice.value = res.questions
   Object.keys(practiceAnswers).forEach((k) => delete practiceAnswers[Number(k)])
   Object.keys(practiceMultiple).forEach((k) => delete practiceMultiple[Number(k)])
+  Object.keys(practiceTexts).forEach((k) => delete practiceTexts[Number(k)])
+  Object.keys(selfCorrect).forEach((k) => delete selfCorrect[Number(k)])
+  practice.value.forEach((q) => {
+    if (isSubjective(q.type)) selfCorrect[q.question_id] = null
+  })
   practiceVisible.value = true
 }
 
 async function submitPractice() {
+  const unanswered = practice.value.filter((q) => {
+    if (!isSubjective(q.type)) return false
+    return selfCorrect[q.question_id] === null || selfCorrect[q.question_id] === undefined
+  })
+  if (unanswered.length) {
+    ElMessage.warning('请对所有填空/简答题完成自评（答对了 / 仍答错）')
+    return
+  }
   practicing.value = true
   try {
-    const answers = practice.value.map((q) => ({
-      question_id: q.question_id,
-      answer: q.type === 'multiple' ? practiceMultiple[q.question_id] || [] : practiceAnswers[q.question_id] || ''
-    }))
+    const answers = practice.value.map((q) => {
+      if (q.type === 'multiple') {
+        return { question_id: q.question_id, answer: practiceMultiple[q.question_id] || [] }
+      }
+      if (isSubjective(q.type)) {
+        return { question_id: q.question_id, answer: practiceTexts[q.question_id] || '', self_correct: selfCorrect[q.question_id] }
+      }
+      return { question_id: q.question_id, answer: practiceAnswers[q.question_id] || '' }
+    })
     const res = await wrongApi.submitPractice(answers)
     ElMessage.success(`练习完成：答对 ${res.correct} / ${res.total}`)
     practiceVisible.value = false
@@ -126,5 +178,24 @@ onMounted(load)
 .practice-item {
   padding: 12px 0;
   border-bottom: 1px solid #f0f0f0;
+}
+.lost-score {
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+.self-check {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+.self-check .reference {
+  color: var(--el-color-success);
+}
+.self-check-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
 }
 </style>

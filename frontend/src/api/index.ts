@@ -128,7 +128,7 @@ export const wrongApi = {
   practice() {
     return http.get<never, { questions: PracticeQuestion[] }>('/wrong-questions/practice')
   },
-  submitPractice(answers: { question_id: number; answer?: unknown }[]) {
+  submitPractice(answers: { question_id: number; answer?: unknown; self_correct?: boolean | null }[]) {
     return http.post<never, PracticeResultResponse>('/wrong-questions/practice', { answers })
   }
 }
