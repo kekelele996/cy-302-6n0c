@@ -9,6 +9,8 @@ type WrongQuestion struct {
 	QuestionID     uint      `gorm:"index;not null" json:"question_id"`
 	KnowledgePoint string    `gorm:"size:128;index" json:"knowledge_point"`
 	WrongCount     int       `gorm:"not null;default:1" json:"wrong_count"`
+	LostScore      float64   `gorm:"not null;default:0" json:"lost_score"`
+	LastAttemptID  uint      `gorm:"index;not null;default:0" json:"last_attempt_id"`
 	LastWrongAt    time.Time `json:"last_wrong_at"`
 	Status         string    `gorm:"size:16;not null;default:unresolved" json:"status"`
 	CreatedAt      time.Time `json:"created_at"`

@@ -70,6 +70,7 @@ func New(s *handler.Server, authMiddleware gin.HandlerFunc) *gin.Engine {
 				studentOnly.DELETE("/wrong-questions/:id", s.DeleteWrongQuestion)
 				studentOnly.GET("/wrong-questions/practice", s.PracticeWrongQuestions)
 				studentOnly.POST("/wrong-questions/practice", s.SubmitPractice)
+				studentOnly.PUT("/wrong-questions/practice/review", s.ReviewPractice)
 			}
 
 			authorized.GET("/exams", s.ListExams)

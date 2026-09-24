@@ -62,6 +62,8 @@ type WrongRepo interface {
 	ListWrongQuestions(ctx context.Context, studentID uint, knowledgePoint string, page, pageSize int) ([]model.WrongQuestion, int64, error)
 	DeleteWrongQuestion(ctx context.Context, id, studentID uint) error
 	MarkWrongQuestionResolved(ctx context.Context, id, studentID uint) error
+	ResolveWrongQuestionByQuestion(ctx context.Context, studentID, questionID uint) error
+	FindWrongQuestion(ctx context.Context, studentID, questionID uint) (*model.WrongQuestion, error)
 }
 
 // StatsRepo is the minimal persistence contract used by statistics queries.

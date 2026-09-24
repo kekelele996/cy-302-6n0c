@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/gbexam/online-exam/internal/constants"
@@ -17,11 +18,19 @@ type WrongQuestionService struct {
 	baseService
 	wrongRepo    WrongRepo
 	questionRepo QuestionRepo
+	attemptRepo  AttemptRepo
+	examRepo     ExamRepo
 }
 
 // NewWrongQuestionService constructs WrongQuestionService.
-func NewWrongQuestionService(wrongRepo WrongRepo, questionRepo QuestionRepo, logger *slog.Logger) *WrongQuestionService {
-	return &WrongQuestionService{baseService: NewBaseService(logger), wrongRepo: wrongRepo, questionRepo: questionRepo}
+func NewWrongQuestionService(wrongRepo WrongRepo, questionRepo QuestionRepo, attemptRepo AttemptRepo, examRepo ExamRepo, logger *slog.Logger) *WrongQuestionService {
+	return &WrongQuestionService{
+		baseService:  NewBaseService(logger),
+		wrongRepo:    wrongRepo,
+		questionRepo: questionRepo,
+		attemptRepo:  attemptRepo,
+		examRepo:     examRepo,
+	}
 }
 
 // List returns a page of a student's wrong questions.
@@ -38,6 +47,7 @@ func (s *WrongQuestionService) List(ctx context.Context, studentID uint, query d
 	if err != nil {
 		return dto.PageResult{}, fmt.Errorf("find questions by ids: %w", err)
 	}
+	examTitles := s.examTitlesFor(ctx, records)
 	page, pageSize := normalizePage(query.Page, query.PageSize)
 	items := make([]dto.WrongQuestionItem, 0, len(records))
 	for _, r := range records {
@@ -50,12 +60,43 @@ func (s *WrongQuestionService) List(ctx context.Context, studentID uint, query d
 			QuestionID:     r.QuestionID,
 			KnowledgePoint: r.KnowledgePoint,
 			WrongCount:     r.WrongCount,
+			LostScore:      r.LostScore,
+			ExamTitle:      examTitles[r.LastAttemptID],
 			Status:         r.Status,
 			LastWrongAt:    r.LastWrongAt,
 			Question:       *questionToResponse(&q),
 		})
 	}
 	return dto.PageResult{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// examTitlesFor resolves the exam title associated with each record's latest
+// attempt, used to show which exam the lost points came from.
+func (s *WrongQuestionService) examTitlesFor(ctx context.Context, records []model.WrongQuestion) map[uint]string {
+	titles := make(map[uint]string, len(records))
+	examCache := make(map[uint]string)
+	for _, r := range records {
+		if r.LastAttemptID == 0 {
+			continue
+		}
+		if _, done := titles[r.LastAttemptID]; done {
+			continue
+		}
+		attempt, err := s.attemptRepo.FindAttemptByID(ctx, r.LastAttemptID)
+		if err != nil {
+			titles[r.LastAttemptID] = ""
+			continue
+		}
+		title, ok := examCache[attempt.ExamID]
+		if !ok {
+			if exam, err := s.examRepo.FindExamByID(ctx, attempt.ExamID); err == nil {
+				title = exam.Title
+			}
+			examCache[attempt.ExamID] = title
+		}
+		titles[r.LastAttemptID] = title
+	}
+	return titles
 }
 
 // Delete removes a wrong-question record.
@@ -112,6 +153,9 @@ func (s *WrongQuestionService) Practice(ctx context.Context, studentID uint) (*d
 }
 
 // SubmitPractice grades a practice set and updates wrong-question status.
+// Objective and fill-in-the-blank questions are graded automatically; short
+// answer questions return the reference answer for student self-assessment
+// via ReviewPractice.
 func (s *WrongQuestionService) SubmitPractice(ctx context.Context, studentID uint, req dto.PracticeAnswerRequest) (*dto.PracticeResultResponse, error) {
 	ids := make([]uint, 0, len(req.Answers))
 	for _, a := range req.Answers {
@@ -136,37 +180,93 @@ func (s *WrongQuestionService) SubmitPractice(ctx context.Context, studentID uin
 		if !ok {
 			continue
 		}
-		if !ObjectiveQuestionTypes()[q.Type] {
+		correctAnswer, _ := unmarshalAnswer(q.Answer)
+		item := dto.PracticeResultItem{QuestionID: q.ID}
+		if q.Type != constants.QuestionShortAnswer {
+			// Choice questions and fill-in-the-blank are auto-gradable.
+			correct := false
+			if ObjectiveQuestionTypes()[q.Type] {
+				correct = isCorrectObjective(q.Type, correctAnswer, a.Answer)
+			} else {
+				correct = isCorrectFillBlank(correctAnswer, a.Answer)
+			}
+			item.AutoGraded = true
+			item.Correct = correct
+			if correct {
+				item.Score = q.Score
+				if record, exists := recordByQuestion[q.ID]; exists {
+					if err := s.wrongRepo.MarkWrongQuestionResolved(ctx, record.ID, studentID); err != nil {
+						return nil, fmt.Errorf("resolve wrong question: %w", err)
+					}
+				}
+			} else if err := s.recordPracticeWrong(ctx, studentID, &q); err != nil {
+				return nil, err
+			}
+			result.Items = append(result.Items, item)
+			result.Total++
+			if item.Correct {
+				result.Correct++
+			}
 			continue
 		}
-		correctAnswer, _ := unmarshalAnswer(q.Answer)
-		correct := isCorrectObjective(q.Type, correctAnswer, a.Answer)
-		item := dto.PracticeResultItem{QuestionID: q.ID, Correct: correct, Score: 0}
-		if correct {
-			item.Score = q.Score
-			if record, exists := recordByQuestion[q.ID]; exists {
-				if err := s.wrongRepo.MarkWrongQuestionResolved(ctx, record.ID, studentID); err != nil {
-					return nil, fmt.Errorf("resolve wrong question: %w", err)
-				}
-			}
-		} else {
-			w := &model.WrongQuestion{
-				StudentID:      studentID,
-				QuestionID:     q.ID,
-				KnowledgePoint: q.KnowledgePoint,
-				WrongCount:     1,
-				LastWrongAt:    time.Now(),
-				Status:         constants.WrongUnresolved,
-			}
-			if err := s.wrongRepo.UpsertWrongQuestion(ctx, w); err != nil {
-				return nil, fmt.Errorf("upsert wrong question: %w", err)
-			}
-		}
+		// Short answer: defer to student self-assessment.
+		item.AutoGraded = false
+		item.CorrectAnswer = correctAnswer
+		item.Analysis = q.Analysis
 		result.Items = append(result.Items, item)
-		result.Total++
-		if correct {
-			result.Correct++
-		}
 	}
 	return result, nil
+}
+
+// ReviewPractice records a student's self-assessment of a subjective practice
+// question: a correct self-review marks it mastered, otherwise it stays in
+// the unmastered list.
+func (s *WrongQuestionService) ReviewPractice(ctx context.Context, studentID uint, req dto.PracticeReviewRequest) error {
+	q, err := s.questionRepo.FindQuestionByID(ctx, req.QuestionID)
+	if err != nil {
+		return err
+	}
+	record, err := s.wrongRepo.FindWrongQuestion(ctx, studentID, req.QuestionID)
+	if err != nil {
+		return ErrNotFound
+	}
+	if req.Correct {
+		if err := s.wrongRepo.MarkWrongQuestionResolved(ctx, record.ID, studentID); err != nil {
+			return fmt.Errorf("resolve wrong question: %w", err)
+		}
+		return nil
+	}
+	return s.recordPracticeWrong(ctx, studentID, q)
+}
+
+func (s *WrongQuestionService) recordPracticeWrong(ctx context.Context, studentID uint, q *model.Question) error {
+	w := &model.WrongQuestion{
+		StudentID:      studentID,
+		QuestionID:     q.ID,
+		KnowledgePoint: q.KnowledgePoint,
+		WrongCount:     1,
+		LostScore:      q.Score,
+		LastWrongAt:    time.Now(),
+		Status:         constants.WrongUnresolved,
+	}
+	if err := s.wrongRepo.UpsertWrongQuestion(ctx, w); err != nil {
+		return fmt.Errorf("upsert wrong question: %w", err)
+	}
+	return nil
+}
+
+// isCorrectFillBlank compares blank answers in order, ignoring surrounding
+// whitespace and letter case.
+func isCorrectFillBlank(correct, student any) bool {
+	c, ok1 := toStringSlice(correct)
+	st, ok2 := toStringSlice(student)
+	if !ok1 || !ok2 || len(c) == 0 || len(c) != len(st) {
+		return false
+	}
+	for i := range c {
+		if !strings.EqualFold(strings.TrimSpace(c[i]), strings.TrimSpace(st[i])) {
+			return false
+		}
+	}
+	return true
 }

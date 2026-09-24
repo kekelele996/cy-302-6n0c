@@ -191,6 +191,8 @@ export interface WrongQuestionItem {
   question_id: number
   knowledge_point: string
   wrong_count: number
+  lost_score: number
+  exam_title: string
   status: string
   last_wrong_at: string
   question: Question
@@ -205,8 +207,17 @@ export interface PracticeQuestion {
   knowledge_point: string
 }
 
+export interface PracticeResultItem {
+  question_id: number
+  correct: boolean
+  auto_graded: boolean
+  score: number
+  correct_answer?: unknown
+  analysis?: string
+}
+
 export interface PracticeResultResponse {
   total: number
   correct: number
-  items: { question_id: number; correct: boolean; score: number }[]
+  items: PracticeResultItem[]
 }

@@ -49,7 +49,7 @@ func main() {
 	examService := service.NewExamService(repo, repo, logger)
 	attemptService := service.NewAttemptService(repo, repo, repo, repo, repo, logger)
 	statsService := service.NewStatsService(repo, logger)
-	wrongService := service.NewWrongQuestionService(repo, repo, logger)
+	wrongService := service.NewWrongQuestionService(repo, repo, repo, repo, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

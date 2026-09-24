@@ -130,6 +130,12 @@ export const wrongApi = {
   },
   submitPractice(answers: { question_id: number; answer?: unknown }[]) {
     return http.post<never, PracticeResultResponse>('/wrong-questions/practice', { answers })
+  },
+  reviewPractice(questionId: number, correct: boolean) {
+    return http.put<never, { message: string }>('/wrong-questions/practice/review', {
+      question_id: questionId,
+      correct
+    })
   }
 }
 

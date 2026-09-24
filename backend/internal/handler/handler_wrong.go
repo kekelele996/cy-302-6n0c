@@ -65,3 +65,17 @@ func (s *Server) SubmitPractice(c *gin.Context) {
 	}
 	httpx.OK(c, result)
 }
+
+// ReviewPractice handles PUT /wrong-questions/practice/review.
+func (s *Server) ReviewPractice(c *gin.Context) {
+	var req dto.PracticeReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, http.StatusUnprocessableEntity, constants.CodeValidation, "请求参数不合法")
+		return
+	}
+	if err := s.wrong.ReviewPractice(c.Request.Context(), middleware.UserID(c), req); err != nil {
+		s.respondError(c, err)
+		return
+	}
+	httpx.OK(c, gin.H{"message": "ok"})
+}

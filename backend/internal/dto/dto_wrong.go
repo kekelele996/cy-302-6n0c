@@ -14,6 +14,8 @@ type WrongQuestionItem struct {
 	QuestionID     uint             `json:"question_id"`
 	KnowledgePoint string           `json:"knowledge_point"`
 	WrongCount     int              `json:"wrong_count"`
+	LostScore      float64          `json:"lost_score"`
+	ExamTitle      string           `json:"exam_title"`
 	Status         string           `json:"status"`
 	LastWrongAt    time.Time        `json:"last_wrong_at"`
 	Question       QuestionResponse `json:"question"`
@@ -45,11 +47,15 @@ type PracticeAnswerRequest struct {
 	Answers []PracticeAnswerItem `json:"answers" binding:"required,min=1,dive"`
 }
 
-// PracticeResultItem reports one practice answer.
+// PracticeResultItem reports one practice answer. Subjective questions that
+// cannot be graded automatically return the reference answer for review.
 type PracticeResultItem struct {
-	QuestionID uint  `json:"question_id"`
-	Correct    bool  `json:"correct"`
-	Score      float64 `json:"score"`
+	QuestionID    uint    `json:"question_id"`
+	Correct       bool    `json:"correct"`
+	AutoGraded    bool    `json:"auto_graded"`
+	Score         float64 `json:"score"`
+	CorrectAnswer any     `json:"correct_answer,omitempty"`
+	Analysis      string  `json:"analysis,omitempty"`
 }
 
 // PracticeResultResponse summarizes a practice round.
@@ -57,4 +63,11 @@ type PracticeResultResponse struct {
 	Total   int                  `json:"total"`
 	Correct int                  `json:"correct"`
 	Items   []PracticeResultItem `json:"items"`
+}
+
+// PracticeReviewRequest lets a student self-assess a subjective practice
+// question after comparing it with the reference answer.
+type PracticeReviewRequest struct {
+	QuestionID uint `json:"question_id" binding:"required"`
+	Correct    bool `json:"correct"`
 }

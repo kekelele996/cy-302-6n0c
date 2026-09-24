@@ -216,12 +216,17 @@ func (s *AttemptService) Submit(ctx context.Context, studentID, attemptID uint) 
 			if correct {
 				score = it.Score
 				objectiveTotal += score
+				if err := s.wrongRepo.ResolveWrongQuestionByQuestion(ctx, studentID, q.ID); err != nil {
+					return fmt.Errorf("resolve wrong question: %w", err)
+				}
 			} else {
 				wrongItems = append(wrongItems, &model.WrongQuestion{
 					StudentID:      studentID,
 					QuestionID:     q.ID,
 					KnowledgePoint: q.KnowledgePoint,
 					WrongCount:     1,
+					LostScore:      it.Score,
+					LastAttemptID:  attemptID,
 					LastWrongAt:    now,
 					Status:         constants.WrongUnresolved,
 				})
@@ -316,6 +321,9 @@ func (s *AttemptService) Grade(ctx context.Context, teacherID uint, role string,
 			return fmt.Errorf("grade answer: %w", err)
 		}
 		answerMap[item.ExamQuestionID] = answer
+		if err := s.syncSubjectiveWrongQuestion(ctx, attempt.StudentID, attemptID, &q, eq.Score, item.Score); err != nil {
+			return err
+		}
 	}
 
 	total := attempt.ObjectiveScore
@@ -499,6 +507,34 @@ func (s *AttemptService) Report(ctx context.Context, role string, userID, attemp
 		TypeBreakdown:   breakdown,
 		SubmittedAt:     attempt.SubmittedAt,
 	}, nil
+}
+
+// syncSubjectiveWrongQuestion keeps the wrong-question book in step with a
+// teacher's score: partial credit adds the question to the unmastered list
+// with the points lost in this exam, while full credit marks it mastered so
+// that it leaves practice. Saving the same low score repeatedly (same attempt)
+// must not inflate the wrong count.
+func (s *AttemptService) syncSubjectiveWrongQuestion(ctx context.Context, studentID, attemptID uint, q *model.Question, maxScore, score float64) error {
+	if score >= maxScore {
+		if err := s.wrongRepo.ResolveWrongQuestionByQuestion(ctx, studentID, q.ID); err != nil {
+			return fmt.Errorf("resolve wrong question: %w", err)
+		}
+		return nil
+	}
+	w := &model.WrongQuestion{
+		StudentID:      studentID,
+		QuestionID:     q.ID,
+		KnowledgePoint: q.KnowledgePoint,
+		WrongCount:     1,
+		LostScore:      round2(maxScore - score),
+		LastAttemptID:  attemptID,
+		LastWrongAt:    time.Now(),
+		Status:         constants.WrongUnresolved,
+	}
+	if err := s.wrongRepo.UpsertWrongQuestion(ctx, w); err != nil {
+		return fmt.Errorf("upsert wrong question: %w", err)
+	}
+	return nil
 }
 
 // ListGrading returns submitted attempts of an exam for teacher grading.

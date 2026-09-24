@@ -4,19 +4,31 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gbexam/online-exam/internal/constants"
 	"github.com/gbexam/online-exam/internal/model"
 )
 
-// UpsertWrongQuestion records a wrong answer, incrementing the wrong count.
+// UpsertWrongQuestion records a wrong answer.
+//
+// Repeated saves that refer to the same attempt (for example a teacher
+// grading the same subjective answer several times) only refresh the lost
+// score and status; the wrong count is not incremented again. When no
+// attempt is associated (practice rounds) every call counts once.
 func (r *Repository) UpsertWrongQuestion(ctx context.Context, w *model.WrongQuestion) error {
 	var existing model.WrongQuestion
 	err := r.db.WithContext(ctx).Where("student_id = ? AND question_id = ?", w.StudentID, w.QuestionID).First(&existing).Error
 	if err == nil {
-		res := r.db.WithContext(ctx).Model(&model.WrongQuestion{}).Where("id = ?", existing.ID).Updates(map[string]any{
-			"wrong_count":   existing.WrongCount + 1,
-			"last_wrong_at": w.LastWrongAt,
-			"status":        "unresolved",
-		})
+		updates := map[string]any{
+			"lost_score":      w.LostScore,
+			"last_wrong_at":   w.LastWrongAt,
+			"knowledge_point": w.KnowledgePoint,
+			"status":          constants.WrongUnresolved,
+		}
+		if w.LastAttemptID == 0 || existing.LastAttemptID != w.LastAttemptID {
+			updates["wrong_count"] = existing.WrongCount + 1
+		}
+		updates["last_attempt_id"] = w.LastAttemptID
+		res := r.db.WithContext(ctx).Model(&model.WrongQuestion{}).Where("id = ?", existing.ID).Updates(updates)
 		if res.Error != nil {
 			return fmt.Errorf("update wrong question: %w", res.Error)
 		}
@@ -62,9 +74,9 @@ func (r *Repository) DeleteWrongQuestion(ctx context.Context, id, studentID uint
 	return nil
 }
 
-// MarkWrongQuestionResolved updates the status of a wrong question.
+// MarkWrongQuestionResolved updates the status of one wrong question.
 func (r *Repository) MarkWrongQuestionResolved(ctx context.Context, id, studentID uint) error {
-	res := r.db.WithContext(ctx).Model(&model.WrongQuestion{}).Where("id = ? AND student_id = ?", id, studentID).Update("status", "resolved")
+	res := r.db.WithContext(ctx).Model(&model.WrongQuestion{}).Where("id = ? AND student_id = ?", id, studentID).Update("status", constants.WrongResolved)
 	if res.Error != nil {
 		return fmt.Errorf("resolve wrong question: %w", res.Error)
 	}
@@ -72,4 +84,29 @@ func (r *Repository) MarkWrongQuestionResolved(ctx context.Context, id, studentI
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ResolveWrongQuestionByQuestion marks a student's record for one question as
+// mastered. It is a no-op when no record exists.
+func (r *Repository) ResolveWrongQuestionByQuestion(ctx context.Context, studentID, questionID uint) error {
+	res := r.db.WithContext(ctx).Model(&model.WrongQuestion{}).
+		Where("student_id = ? AND question_id = ?", studentID, questionID).
+		Update("status", constants.WrongResolved)
+	if res.Error != nil {
+		return fmt.Errorf("resolve wrong question by question: %w", res.Error)
+	}
+	return nil
+}
+
+// FindWrongQuestion returns one student's record for a question.
+func (r *Repository) FindWrongQuestion(ctx context.Context, studentID, questionID uint) (*model.WrongQuestion, error) {
+	var w model.WrongQuestion
+	err := r.db.WithContext(ctx).Where("student_id = ? AND question_id = ?", studentID, questionID).First(&w).Error
+	if err != nil {
+		if isRecordNotFound(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("find wrong question: %w", err)
+	}
+	return &w, nil
 }

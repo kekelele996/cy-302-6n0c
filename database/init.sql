@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS wrong_questions (
     question_id BIGINT UNSIGNED NOT NULL,
     knowledge_point VARCHAR(128) DEFAULT '',
     wrong_count INT NOT NULL DEFAULT 1,
+    lost_score DOUBLE NOT NULL DEFAULT 0,
+    last_attempt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
     last_wrong_at DATETIME(3) NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'unresolved',
     created_at DATETIME(3) NULL,
